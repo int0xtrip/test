@@ -3,8 +3,11 @@
 import asyncio
 import base64
 import json
+import logging
 import time
+import traceback
 
+import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,6 +15,27 @@ from pydantic import BaseModel
 
 from app.pipeline import TrackingSession
 from app.baseline.profile import UserProfile
+
+logger = logging.getLogger("oculometry")
+logging.basicConfig(level=logging.INFO)
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
+def safe_json(data: dict) -> str:
+    """Serialize dict to JSON, handling numpy types."""
+    return json.dumps(data, cls=NumpyEncoder)
+
 
 app = FastAPI(title="Oculometry - Webcam Eye Tracking", version="1.0.0")
 
@@ -98,29 +122,30 @@ async def websocket_track(websocket: WebSocket, session_id: str):
                 width = msg.get("width", 640)
                 height = msg.get("height", 480)
                 result = session.process_frame(frame_bytes, width, height)
-                await websocket.send_json(result)
+                await websocket.send_text(safe_json(result))
 
             elif msg_type == "calibrate_center":
                 session.calibrate_center(msg.get("raw_x"), msg.get("raw_y"))
-                await websocket.send_json({"type": "calibrated", "status": "ok"})
+                await websocket.send_text(safe_json({"type": "calibrated", "status": "ok"}))
 
             elif msg_type == "stimulus":
                 session.set_stimulus(msg["target_x"], msg["target_y"])
-                await websocket.send_json({"type": "stimulus_ack"})
+                await websocket.send_text(safe_json({"type": "stimulus_ack"}))
 
             elif msg_type == "get_signal":
                 signal = session.get_recent_signal(msg.get("n", 90))
-                await websocket.send_json({"type": "signal_data", "data": signal})
+                await websocket.send_text(safe_json({"type": "signal_data", "data": signal}))
 
             elif msg_type == "get_saccades":
                 saccades = session.get_recent_saccades(msg.get("n", 10))
-                await websocket.send_json({"type": "saccade_data", "data": saccades})
+                await websocket.send_text(safe_json({"type": "saccade_data", "data": saccades}))
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
+        logger.error(f"WebSocket error: {e}\n{traceback.format_exc()}")
         try:
-            await websocket.send_json({"error": str(e)})
+            await websocket.send_text(safe_json({"error": str(e)}))
         except Exception:
             pass
 
@@ -133,7 +158,7 @@ async def websocket_track_simple(websocket: WebSocket):
     sid = session.session_id
     sessions[sid] = session
 
-    await websocket.send_json({"type": "session_created", "session_id": sid})
+    await websocket.send_text(safe_json({"type": "session_created", "session_id": sid}))
 
     try:
         while True:
@@ -146,19 +171,19 @@ async def websocket_track_simple(websocket: WebSocket):
                 width = msg.get("width", 640)
                 height = msg.get("height", 480)
                 result = session.process_frame(frame_bytes, width, height)
-                await websocket.send_json(result)
+                await websocket.send_text(safe_json(result))
 
             elif msg_type == "calibrate_center":
                 session.calibrate_center(msg.get("raw_x"), msg.get("raw_y"))
-                await websocket.send_json({"type": "calibrated"})
+                await websocket.send_text(safe_json({"type": "calibrated"}))
 
             elif msg_type == "stimulus":
                 session.set_stimulus(msg["target_x"], msg["target_y"])
-                await websocket.send_json({"type": "stimulus_ack"})
+                await websocket.send_text(safe_json({"type": "stimulus_ack"}))
 
             elif msg_type == "end":
                 summary = session.end_session()
-                await websocket.send_json({"type": "session_ended", **summary})
+                await websocket.send_text(safe_json({"type": "session_ended", **summary}))
                 break
 
     except WebSocketDisconnect:
@@ -166,7 +191,8 @@ async def websocket_track_simple(websocket: WebSocket):
             sessions[sid].end_session()
             del sessions[sid]
     except Exception as e:
+        logger.error(f"WebSocket error: {e}\n{traceback.format_exc()}")
         try:
-            await websocket.send_json({"error": str(e)})
+            await websocket.send_text(safe_json({"error": str(e)}))
         except Exception:
             pass
