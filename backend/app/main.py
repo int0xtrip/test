@@ -23,6 +23,8 @@ logging.basicConfig(level=logging.INFO)
 class NumpyEncoder(json.JSONEncoder):
     """JSON encoder that handles numpy types."""
     def default(self, obj):
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
         if isinstance(obj, (np.integer,)):
             return int(obj)
         if isinstance(obj, (np.floating,)):
