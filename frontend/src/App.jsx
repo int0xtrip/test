@@ -6,8 +6,9 @@ import GazePlot from './components/GazePlot';
 import StatsPanel from './components/StatsPanel';
 import SaccadeList from './components/SaccadeList';
 import GuidedTest from './components/GuidedTest';
+import MainSequencePlot from './components/MainSequencePlot';
 
-const FRAME_INTERVAL = 33; // ~30fps
+const FRAME_INTERVAL = 33; // ~30 fps
 const SCREEN_W = window.screen.width || 1920;
 const SCREEN_H = window.screen.height || 1080;
 
@@ -21,6 +22,7 @@ export default function App() {
   const [faceDetected, setFaceDetected] = useState(false);
   const [gazeHistory, setGazeHistory] = useState([]);
   const [saccades, setSaccades] = useState([]);
+  const [fixations, setFixations] = useState([]);
   const [stats, setStats] = useState(null);
   const [sessionSummary, setSessionSummary] = useState(null);
   const [calibrated, setCalibrated] = useState(false);
@@ -28,7 +30,6 @@ export default function App() {
   const frameLoopRef = useRef(null);
   const gazeRef = useRef({ x: null, y: null });
 
-  // Handle incoming WebSocket messages
   const handleMessage = useCallback((data) => {
     if (data.type === 'session_ended') {
       setSessionSummary(data);
@@ -40,42 +41,42 @@ export default function App() {
     }
     if (data.error) return;
 
-    // Normal frame result
     if (data.quality) setQuality(data.quality);
     setFaceDetected(!!data.face_detected);
 
     if (data.gaze) {
       gazeRef.current = { x: data.gaze.screen_x, y: data.gaze.screen_y };
-
       setGazeHistory(prev => {
         const next = [...prev, {
           t: data.timestamp,
           x: data.gaze.screen_x,
           y: data.gaze.screen_y,
         }];
-        // Keep last 3 seconds of data (~90 samples at 30fps)
-        if (next.length > 120) return next.slice(-120);
-        return next;
+        return next.length > 120 ? next.slice(-120) : next;
       });
     }
 
     if (data.saccade) {
       setSaccades(prev => {
         const next = [...prev, data.saccade];
-        if (next.length > 50) return next.slice(-50);
-        return next;
+        return next.length > 50 ? next.slice(-50) : next;
+      });
+    }
+
+    if (data.fixation) {
+      setFixations(prev => {
+        const next = [...prev, data.fixation];
+        return next.length > 80 ? next.slice(-80) : next;
       });
     }
 
     if (data.stats) setStats(data.stats);
   }, []);
 
-  // Set message handler
   useEffect(() => {
     ws.setOnMessage(handleMessage);
   }, [ws, handleMessage]);
 
-  // Start tracking
   const startTracking = useCallback(async () => {
     await webcam.start();
     await ws.connect();
@@ -83,10 +84,11 @@ export default function App() {
     setSessionSummary(null);
     setGazeHistory([]);
     setSaccades([]);
+    setFixations([]);
+    setStats(null);
     setCalibrated(false);
   }, [webcam, ws]);
 
-  // Stop tracking
   const stopTracking = useCallback(() => {
     clearInterval(frameLoopRef.current);
     ws.disconnect();
@@ -94,34 +96,36 @@ export default function App() {
     setTracking(false);
   }, [webcam, ws]);
 
-  // Frame capture loop
   useEffect(() => {
     if (!tracking || !ws.connected) return;
-
     frameLoopRef.current = setInterval(() => {
       const frame = webcam.captureFrame();
-      if (frame) {
-        ws.sendFrame(frame.base64, frame.width, frame.height);
-      }
+      if (frame) ws.sendFrame(frame.base64, frame.width, frame.height);
     }, FRAME_INTERVAL);
-
     return () => clearInterval(frameLoopRef.current);
   }, [tracking, ws.connected, webcam, ws]);
 
-  // Quick calibration
   const handleCalibrate = useCallback(() => {
     ws.sendMessage({ type: 'calibrate_center' });
   }, [ws]);
 
-  // Stimulus for guided test
-  const handleStimulus = useCallback((tx, ty) => {
-    ws.sendMessage({ type: 'stimulus', target_x: tx, target_y: ty });
+  // Pro-saccade: no expected direction. Anti-saccade: expected_direction sent.
+  const handleStimulus = useCallback((tx, ty, expectedDirection) => {
+    ws.sendMessage({
+      type: 'stimulus',
+      target_x: tx,
+      target_y: ty,
+      ...(expectedDirection ? { expected_direction: expectedDirection } : {}),
+    });
   }, [ws]);
 
   return (
     <div className="app">
       <header className="header">
-        <h1>Oculometry</h1>
+        <div className="header-left">
+          <h1>Oculometry</h1>
+          <span className="app-subtitle">Eye Movement Analysis</span>
+        </div>
         <div className="header-right">
           <span className="privacy-badge">All processing local</span>
           {tracking ? (
@@ -133,7 +137,7 @@ export default function App() {
       </header>
 
       <div className="main-content">
-        {/* Left column: webcam + controls */}
+        {/* Left column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <WebcamView
             videoRef={webcam.videoRef}
@@ -143,9 +147,7 @@ export default function App() {
           />
 
           {webcam.error && (
-            <div className="card" style={{ color: 'var(--danger)' }}>
-              {webcam.error}
-            </div>
+            <div className="card" style={{ color: 'var(--danger)' }}>{webcam.error}</div>
           )}
 
           {tracking && (
@@ -153,23 +155,19 @@ export default function App() {
               <div className="card-title">Controls</div>
               <div className="mode-selector">
                 <button
-                  className={`mode-btn ${mode === 'passive' ? 'active' : ''}`}
+                  className={`mode-btn${mode === 'passive' ? ' active' : ''}`}
                   onClick={() => setMode('passive')}
-                >
-                  Passive Mode
-                </button>
+                >Passive</button>
                 <button
-                  className={`mode-btn ${mode === 'guided' ? 'active' : ''}`}
+                  className={`mode-btn${mode === 'guided' ? ' active' : ''}`}
                   onClick={() => setMode('guided')}
-                >
-                  Guided Test
-                </button>
+                >Guided Test</button>
               </div>
 
               {!calibrated && faceDetected && (
                 <div style={{ marginBottom: 12 }}>
                   <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                    Look at the center of your screen and click calibrate for better accuracy (optional).
+                    Look at the center of your screen, then click calibrate.
                   </p>
                   <button className="btn btn-secondary" onClick={handleCalibrate}>
                     Quick Calibrate
@@ -178,7 +176,7 @@ export default function App() {
               )}
               {calibrated && (
                 <p style={{ fontSize: 12, color: 'var(--success)' }}>
-                  Calibrated. Tracking will improve over time.
+                  Calibrated ✓
                 </p>
               )}
             </div>
@@ -195,9 +193,10 @@ export default function App() {
           )}
         </div>
 
-        {/* Right column: data visualization */}
+        {/* Right column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <GazePlot gazeHistory={gazeHistory} saccades={saccades} />
+          <GazePlot gazeHistory={gazeHistory} saccades={saccades} fixations={fixations} />
+          <MainSequencePlot saccades={saccades} />
           <StatsPanel stats={stats} deviation={sessionSummary?.deviation} />
           <SaccadeList saccades={saccades} />
         </div>
@@ -205,14 +204,10 @@ export default function App() {
 
       {/* Session summary modal */}
       {sessionSummary && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.7)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div className="card" style={{ maxWidth: 500, width: '90%' }}>
-            <div className="card-title">Session Summary</div>
-            <p style={{ fontSize: 13, marginBottom: 12 }}>
+        <div className="modal-overlay">
+          <div className="card modal-card">
+            <div className="card-title">Session Complete</div>
+            <p style={{ fontSize: 13, marginBottom: 12, color: 'var(--text-secondary)' }}>
               Duration: {sessionSummary.duration_seconds}s
             </p>
             <StatsPanel stats={sessionSummary.stats} deviation={sessionSummary.deviation} />

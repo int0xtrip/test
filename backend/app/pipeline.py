@@ -52,6 +52,7 @@ class TrackingSession:
                 "gaze": None,
                 "signal": None,
                 "saccade": None,
+                "fixation": None,
                 "stats": self.saccade_detector.get_stats(),
             }
 
@@ -66,6 +67,12 @@ class TrackingSession:
 
         if quality["fps"] > 5:
             self.signal_processor.update_sampling_rate(quality["fps"])
+
+        # Include the most recently completed fixation in the response when
+        # a new saccade has just been detected (fixation just ended).
+        recent_fix = None
+        if saccade_event and self.saccade_detector.fixations:
+            recent_fix = self.saccade_detector.fixations[-1].to_dict()
 
         return {
             "frame": self.frame_count,
@@ -88,11 +95,13 @@ class TrackingSession:
                 "noise_level": signal["noise_level"],
             },
             "saccade": saccade_event.to_dict() if saccade_event else None,
+            "fixation": recent_fix,
             "stats": self.saccade_detector.get_stats(),
         }
 
-    def set_stimulus(self, target_x: float, target_y: float):
-        self.saccade_detector.set_stimulus(target_x, target_y)
+    def set_stimulus(self, target_x: float, target_y: float,
+                     expected_direction: str | None = None):
+        self.saccade_detector.set_stimulus(target_x, target_y, expected_direction)
 
     def calibrate_center(self, raw_x: float = None, raw_y: float = None):
         if raw_x is not None:
@@ -103,6 +112,9 @@ class TrackingSession:
 
     def get_recent_saccades(self, n: int = 10) -> list:
         return self.saccade_detector.get_recent_saccades(n)
+
+    def get_recent_fixations(self, n: int = 20) -> list:
+        return self.saccade_detector.get_recent_fixations(n)
 
     def end_session(self) -> dict:
         duration = time.time() - self.start_time
@@ -135,6 +147,7 @@ class TrackingSession:
             "baseline": baseline,
             "deviation": deviation,
             "recent_saccades": self.get_recent_saccades(20),
+            "recent_fixations": self.get_recent_fixations(20),
         }
 
     def _decode_frame(self, frame_bytes: bytes, width: int, height: int) -> np.ndarray | None:

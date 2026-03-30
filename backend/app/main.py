@@ -180,7 +180,10 @@ async def websocket_track_simple(websocket: WebSocket):
                 await websocket.send_text(safe_json({"type": "calibrated"}))
 
             elif msg_type == "stimulus":
-                session.set_stimulus(msg["target_x"], msg["target_y"])
+                session.set_stimulus(
+                    msg["target_x"], msg["target_y"],
+                    msg.get("expected_direction"),
+                )
                 await websocket.send_text(safe_json({"type": "stimulus_ack"}))
 
             elif msg_type == "end":
