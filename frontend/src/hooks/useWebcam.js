@@ -80,6 +80,7 @@ export default function useWebcam() {
 
   return {
     videoRef: videoCallbackRef,  // callback ref keeps timing-safe
+    videoElRef: videoRef,        // ref object for reading videoWidth/videoHeight
     canvasRef,
     start, stop, captureFrame,
     active, error,

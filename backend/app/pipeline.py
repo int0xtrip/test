@@ -56,6 +56,7 @@ class TrackingSession:
                 "stats": self.saccade_detector.get_stats(),
             }
 
+        h_fr, w_fr = frame_rgb.shape[:2]
         gaze = self.gaze_estimator.estimate(detection)
         signal = self.signal_processor.add_sample(
             gaze["screen_x"], gaze["screen_y"], timestamp
@@ -89,6 +90,12 @@ class TrackingSession:
                 "screen_y": gaze["screen_y"],
                 "head_yaw": gaze["head_yaw"],
                 "head_pitch": gaze["head_pitch"],
+            },
+            "iris": {
+                "left_x":  float(detection["left_iris_center"][0])  / w_fr,
+                "left_y":  float(detection["left_iris_center"][1])  / h_fr,
+                "right_x": float(detection["right_iris_center"][0]) / w_fr,
+                "right_y": float(detection["right_iris_center"][1]) / h_fr,
             },
             "signal": {
                 "filtered_x": signal["filtered_x"],

@@ -37,6 +37,8 @@ export default function App() {
   const gazeRef      = useRef({ x: null, y: null });
   // raw (pre-calibration) gaze for calibration point capture
   const rawGazeRef   = useRef({ x: null, y: null });
+  // live iris positions (normalized 0-1) for overlay drawing
+  const irisRef      = useRef(null);
 
   // ─── WebSocket message handler ───────────────────────────────────────────
 
@@ -59,6 +61,9 @@ export default function App() {
     if (data.quality)    setQuality(data.quality);
     setFaceDetected(!!data.face_detected);
     if (data.tracking_confidence != null) setConfidence(data.tracking_confidence);
+
+    if (!data.face_detected) irisRef.current = null;
+    if (data.iris) irisRef.current = data.iris;
 
     if (data.gaze) {
       rawGazeRef.current = { x: data.gaze.raw_x, y: data.gaze.raw_y };
@@ -249,9 +254,11 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <WebcamView
               videoRef={webcam.videoRef}
+              videoElRef={webcam.videoElRef}
               canvasRef={webcam.canvasRef}
               faceDetected={faceDetected}
               quality={quality}
+              irisRef={irisRef}
             />
 
             <GuidancePanel
