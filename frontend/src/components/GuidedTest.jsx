@@ -1,61 +1,49 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
-// Pro-saccade: look AT the target
-const PROSACCADE_POSITIONS = [
+// 10 reflexive saccade trials — horizontal only, alternating left/right
+// Targets at 15% and 85% of screen width (~8° visual angle at normal viewing distance)
+const PROSACCADE_TRIALS = [
+  { x: 0.85, y: 0.5 }, { x: 0.15, y: 0.5 },
+  { x: 0.85, y: 0.5 }, { x: 0.15, y: 0.5 },
   { x: 0.15, y: 0.5 }, { x: 0.85, y: 0.5 },
   { x: 0.15, y: 0.5 }, { x: 0.85, y: 0.5 },
-  { x: 0.15, y: 0.5 }, { x: 0.85, y: 0.5 },
-  { x: 0.5, y: 0.15 }, { x: 0.5, y: 0.85 },
-  { x: 0.5, y: 0.15 }, { x: 0.5, y: 0.85 },
-  { x: 0.2, y: 0.2 }, { x: 0.8, y: 0.8 },
-  { x: 0.8, y: 0.2 }, { x: 0.2, y: 0.8 },
-  { x: 0.3, y: 0.5 }, { x: 0.7, y: 0.5 },
-  { x: 0.5, y: 0.3 }, { x: 0.5, y: 0.7 },
-  { x: 0.2, y: 0.5 }, { x: 0.8, y: 0.5 },
+  { x: 0.85, y: 0.5 }, { x: 0.15, y: 0.5 },
 ];
 
-// Anti-saccade: target appears on one side, look to the OPPOSITE side
-const ANTISACCADE_POSITIONS = [
+// Anti-saccade: target appears, look to the OPPOSITE side
+const ANTISACCADE_TRIALS = [
   { x: 0.15, y: 0.5, expected: 'right' },
-  { x: 0.85, y: 0.5, expected: 'left' },
+  { x: 0.85, y: 0.5, expected: 'left'  },
   { x: 0.15, y: 0.5, expected: 'right' },
-  { x: 0.85, y: 0.5, expected: 'left' },
+  { x: 0.85, y: 0.5, expected: 'left'  },
+  { x: 0.85, y: 0.5, expected: 'left'  },
   { x: 0.15, y: 0.5, expected: 'right' },
-  { x: 0.85, y: 0.5, expected: 'left' },
+  { x: 0.85, y: 0.5, expected: 'left'  },
   { x: 0.15, y: 0.5, expected: 'right' },
-  { x: 0.85, y: 0.5, expected: 'left' },
   { x: 0.15, y: 0.5, expected: 'right' },
-  { x: 0.85, y: 0.5, expected: 'left' },
-  { x: 0.15, y: 0.5, expected: 'right' },
-  { x: 0.85, y: 0.5, expected: 'left' },
+  { x: 0.85, y: 0.5, expected: 'left'  },
 ];
 
-// Gap paradigm timing (ms)
-const FIXATION_MS = 1000;   // show fixation cross
-const GAP_MS = 200;          // blank interval — increases latency sensitivity
-const TARGET_MS = 1200;      // show target (user should saccade within this window)
-
-// Random jitter to prevent anticipatory saccades
-const jitter = () => Math.floor(Math.random() * 400); // 0-400ms extra fixation
+// Step model (Δt = 0): fixation disappears at exact moment target appears.
+// This maximises latency differences between healthy and PD subjects.
+// Fixation duration: uniform random 1000–2000 ms (paper-specified range).
+const TARGET_MS = 1200;  // target visible window (saccade expected within this)
+const fixationMs = () => Math.floor(Math.random() * 1000) + 1000;  // 1000–2000 ms
 
 export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY }) {
   const [testMode, setTestMode] = useState('prosaccade');
-  const [running, setRunning] = useState(false);
-  const [phase, setPhase] = useState('idle'); // idle | fixation | gap | target
-  const [step, setStep] = useState(0);
-  const [target, setTarget] = useState(null);
+  const [running,  setRunning]  = useState(false);
+  const [phase,    setPhase]    = useState('idle');   // idle | fixation | target
+  const [step,     setStep]     = useState(0);
+  const [target,   setTarget]   = useState(null);
 
-  const stepRef = useRef(0);
-  const timerRef = useRef(null);
+  const timerRef   = useRef(null);
   const runningRef = useRef(false);
 
-  const positions = testMode === 'antisaccade' ? ANTISACCADE_POSITIONS : PROSACCADE_POSITIONS;
+  const trials = testMode === 'antisaccade' ? ANTISACCADE_TRIALS : PROSACCADE_TRIALS;
 
   const clearTimer = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
   };
 
   const stopTest = useCallback(() => {
@@ -66,9 +54,9 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
     setTarget(null);
   }, []);
 
-  // Each trial: fixation cross → gap → target → (advance)
+  // Step-model trial: fixation → (simultaneous: fixation off + target on) → next trial
   const runTrial = useCallback((idx) => {
-    if (!runningRef.current || idx >= positions.length) {
+    if (!runningRef.current || idx >= trials.length) {
       runningRef.current = false;
       setRunning(false);
       setPhase('idle');
@@ -76,45 +64,37 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
       return;
     }
 
-    stepRef.current = idx;
     setStep(idx);
 
-    // Phase 1: fixation cross
+    // Phase 1: show fixation cross only (no target)
     setPhase('fixation');
     setTarget(null);
 
     timerRef.current = setTimeout(() => {
       if (!runningRef.current) return;
 
-      // Phase 2: gap (blank screen — improves latency sensitivity, PD marker)
-      setPhase('gap');
+      // Phase 2 (Δt=0): fixation cross disappears, target appears simultaneously
+      const trial = trials[idx];
+      setPhase('target');
+      setTarget(trial);
 
+      // Notify backend of stimulus onset — triggers marker-driven search window
+      if (onStimulus) {
+        onStimulus(
+          trial.x * screenW,
+          trial.y * screenH,
+          trial.expected || null,
+        );
+      }
+
+      // After target window, advance to next trial
       timerRef.current = setTimeout(() => {
         if (!runningRef.current) return;
+        runTrial(idx + 1);
+      }, TARGET_MS);
 
-        // Phase 3: target appears
-        const pos = positions[idx];
-        setPhase('target');
-        setTarget(pos);
-
-        // Notify backend: send stimulus with expected_direction for anti-saccade
-        if (onStimulus) {
-          onStimulus(
-            pos.x * screenW,
-            pos.y * screenH,
-            pos.expected || null,
-          );
-        }
-
-        timerRef.current = setTimeout(() => {
-          if (!runningRef.current) return;
-          runTrial(idx + 1);
-        }, TARGET_MS);
-
-      }, GAP_MS);
-
-    }, FIXATION_MS + jitter());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, fixationMs());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testMode, onStimulus, screenW, screenH]);
 
   const startTest = useCallback(() => {
@@ -124,18 +104,15 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
     runTrial(0);
   }, [runTrial]);
 
-  useEffect(() => {
-    return () => clearTimer();
-  }, []);
+  useEffect(() => () => clearTimer(), []);
 
-  // Map screen gaze to test-area coordinates
   const gazeInArea = gazeX != null && gazeY != null;
-  const gazePctX = gazeInArea ? (gazeX / screenW) * 100 : null;
-  const gazePctY = gazeInArea ? (gazeY / screenH) * 100 : null;
+  const gazePctX   = gazeInArea ? (gazeX / screenW) * 100 : null;
+  const gazePctY   = gazeInArea ? (gazeY / screenH) * 100 : null;
 
   return (
     <div className="card">
-      <div className="card-title">Guided Saccade Test</div>
+      <div className="card-title">Reflexive Saccade Test</div>
 
       {/* Mode selector */}
       {!running && (
@@ -158,13 +135,13 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
       {/* Instructions */}
       <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
         {testMode === 'antisaccade'
-          ? 'Look to the OPPOSITE side from the purple dot.'
-          : 'Follow the purple dot with your eyes. Keep your head still.'}
+          ? 'When the dot appears, look to the OPPOSITE side. Keep head still.'
+          : 'When the dot appears, look at it immediately. Keep head still.'}
       </p>
       {testMode === 'antisaccade' && (
         <div className="antisaccade-hint">
-          Anti-saccade measures frontal/prefrontal function.
-          Errors (looking toward the dot) are clinically significant.
+          Anti-saccade errors (looking toward the dot) reflect frontal/prefrontal function.
+          Elevated error rates correlate with cognitive impairment.
         </div>
       )}
 
@@ -177,18 +154,17 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
         )}
         {running && (
           <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
-            Trial {step + 1} / {positions.length}
-            {phase === 'fixation' && ' — fixate center'}
-            {phase === 'gap' && ' — gap…'}
-            {phase === 'target' && (testMode === 'antisaccade' ? ' — LOOK AWAY!' : ' — follow dot!')}
+            Trial {step + 1} / {trials.length}
+            {phase === 'fixation' && ' — fixate center cross'}
+            {phase === 'target' && (testMode === 'antisaccade' ? ' — LOOK OPPOSITE!' : ' — look at dot!')}
           </span>
         )}
       </div>
 
       {/* Test area */}
       <div className="test-area">
-        {/* Fixation cross */}
-        {(phase === 'fixation' || phase === 'gap') && (
+        {/* Fixation cross — shown only during fixation phase (step model: disappears with target) */}
+        {phase === 'fixation' && (
           <div className="fixation-cross">
             <div className="fixation-h" />
             <div className="fixation-v" />
@@ -203,7 +179,7 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
           />
         )}
 
-        {/* Anti-saccade direction arrow hint */}
+        {/* Anti-saccade direction arrow */}
         {target && phase === 'target' && testMode === 'antisaccade' && (
           <div
             className="antisaccade-arrow"

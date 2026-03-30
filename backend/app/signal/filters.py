@@ -27,7 +27,7 @@ class GazeSignalProcessor:
         self._raw_y = deque(maxlen=5)
         self._raw_t = deque(maxlen=5)
 
-        self._design_filter(cutoff=8.0)
+        self._design_filter(cutoff=3.5)
         self._noise_window = deque(maxlen=60)
 
     def _design_filter(self, cutoff: float):
@@ -148,7 +148,7 @@ class GazeSignalProcessor:
         """Update sampling rate and redesign filter."""
         if new_rate > 5:
             self.sampling_rate = new_rate
-            self._design_filter(cutoff=min(8.0, new_rate / 2 * 0.8))
+            self._design_filter(cutoff=min(3.5, new_rate / 2 * 0.8))
 
     def reset(self):
         self.x_buffer.clear()

@@ -1,60 +1,78 @@
 import React from 'react';
 
-// Clinical reference ranges for adult saccades (approximate, from literature)
-// Source: Leigh & Zee "The Neurology of Eye Movements", Munoz et al., etc.
+// Clinical reference ranges — calibrated to published webcam-oculometry data
+// (Sledzianowski et al. 2022; Nij Bijvank et al. 2018; Fischer & Ramsperger 1984)
+//
+// LATENCY is the most reliable parameter at 30 fps (temporal error ~16 ms).
+// VELOCITY is severely attenuated at 30 fps — treat as relative indicator only.
+// Healthy adults (horizontal ~8° RS):  latency 190–200 ms upper limit
+// PD stage 1 threshold:                >260 ms
+// PD stage 2 threshold:                >308 ms
 const RANGES = {
   avg_latency_ms: {
     label: 'Avg Latency',
     unit: 'ms',
-    format: v => `${v}`,
-    // Normal: 150-250ms   Slow (possible PD/AD): >300ms   Anticipatory: <80ms
-    color: v => v == null ? null : v < 80 ? 'danger' : v <= 250 ? 'success' : v <= 350 ? 'warning' : 'danger',
-    hint: 'Normal: 150–250 ms. >300 ms may indicate Parkinson\'s or Alzheimer\'s.',
+    format: v => `${Math.round(v)}`,
+    // <80 ms: anticipatory (invalid)
+    // 80–250 ms: normal healthy range
+    // 250–260 ms: borderline
+    // >260 ms: PD range (stage 1 threshold)
+    // >308 ms: advanced PD range
+    color: v => v == null ? null
+      : v < 80    ? 'danger'
+      : v <= 250  ? 'success'
+      : v <= 260  ? 'warning'
+      : 'danger',
+    hint: 'PRIMARY METRIC. Normal healthy: 80–250 ms. >260 ms = Parkinson\'s stage 1 threshold. >308 ms = stage 2. Error ~16 ms at 30 fps.',
+  },
+  avg_gain: {
+    label: 'Avg Gain',
+    unit: '',
+    format: v => v.toFixed(2),
+    // Paper results: healthy webcam ~1.12–1.16 (slight overshoot), reference ~0.98
+    // Hypometric (<0.80): consistent undershoot — Parkinson's marker
+    // Hypermetric (>1.30): cerebellar
+    color: v => v == null ? null
+      : (v >= 0.80 && v <= 1.30) ? 'success'
+      : (v >= 0.70 && v <= 1.40) ? 'warning'
+      : 'danger',
+    hint: 'Saccade accuracy (amplitude / target distance). Webcam norm ~0.98–1.16. Consistently <0.80 suggests hypometric saccades (Parkinson\'s sign).',
   },
   avg_amplitude: {
     label: 'Avg Amplitude',
     unit: 'px',
-    format: v => v.toFixed(1),
-    color: () => null,  // context-dependent (screen size / distance unknown)
-    hint: 'Saccade size in pixels.',
+    format: v => v.toFixed(0),
+    color: () => null,
+    hint: 'Saccade size in pixels. Context-dependent on screen size and viewing distance.',
   },
   avg_duration_ms: {
     label: 'Avg Duration',
     unit: 'ms',
-    format: v => `${v}`,
-    // Normal: 20-100ms   Prolonged: >120ms
-    color: v => v == null ? null : v <= 100 ? 'success' : v <= 150 ? 'warning' : 'danger',
-    hint: 'Normal: 20–100 ms. Prolonged saccades may indicate cerebellar or brainstem pathology.',
+    format: v => `${Math.round(v)}`,
+    color: v => v == null ? null : v <= 120 ? 'success' : v <= 180 ? 'warning' : 'danger',
+    hint: 'Normal: 30–120 ms for ~8° saccades. Prolonged duration may reflect slow saccades.',
   },
   avg_peak_velocity: {
     label: 'Peak Velocity',
     unit: 'px/s',
     format: v => v.toFixed(0),
     color: () => null,
-    hint: 'Peak speed. Should scale linearly with amplitude (see Main Sequence).',
-  },
-  avg_gain: {
-    label: 'Avg Gain',
-    unit: '',
-    format: v => v.toFixed(2),
-    // Normal: 0.85-1.15   Hypometric (PD): <0.75   Hypermetric: >1.2
-    color: v => v == null ? null : (v >= 0.85 && v <= 1.15) ? 'success' : (v >= 0.7 && v <= 1.25) ? 'warning' : 'danger',
-    hint: 'Saccade accuracy. Normal: 0.85–1.15. Consistently low (<0.75) = hypometric — key Parkinson\'s sign.',
+    hint: 'UNRELIABLE at <30 fps — severely attenuated by temporal sampling error. Use latency and gain for clinical assessment.',
   },
   main_sequence_ratio: {
     label: 'Main Sequence',
     unit: 'v/a',
     format: v => v.toFixed(1),
     color: () => null,
-    hint: 'Peak velocity ÷ amplitude ratio. Should be consistent across saccades.',
+    hint: 'Peak velocity ÷ amplitude. Should be consistent across trials. Relative metric — do not compare absolute values across devices.',
   },
   antisaccade_error_rate: {
     label: 'Anti-sacc. Errors',
     unit: '%',
     format: v => `${(v * 100).toFixed(0)}`,
-    // Normal: <15%   Elevated (frontal dysfunction): >25%
-    color: v => v == null ? null : v <= 0.15 ? 'success' : v <= 0.25 ? 'warning' : 'danger',
-    hint: 'Errors (looking toward target) during anti-saccade test. >25% suggests frontal/prefrontal dysfunction.',
+    // Normal healthy: <20%   Cognitive impairment marker: >25%
+    color: v => v == null ? null : v <= 0.20 ? 'success' : v <= 0.30 ? 'warning' : 'danger',
+    hint: 'Errors during anti-saccade (looking toward target instead of away). >25% suggests prefrontal/frontal dysfunction — Alzheimer\'s and PD marker.',
   },
 };
 
