@@ -179,6 +179,20 @@ async def websocket_track_simple(websocket: WebSocket):
                 session.calibrate_center(msg.get("raw_x"), msg.get("raw_y"))
                 await websocket.send_text(safe_json({"type": "calibrated"}))
 
+            elif msg_type == "calibrate_point":
+                session.add_calibration_point(
+                    msg["raw_x"], msg["raw_y"],
+                    msg["screen_x"], msg["screen_y"],
+                )
+                # no ack needed — frontend tracks its own step counter
+
+            elif msg_type == "calibrate_apply":
+                accuracy = session.apply_calibration()
+                await websocket.send_text(safe_json({
+                    "type": "calibration_complete",
+                    "accuracy_px": round(accuracy, 1) if accuracy != float("inf") else None,
+                }))
+
             elif msg_type == "stimulus":
                 session.set_stimulus(
                     msg["target_x"], msg["target_y"],

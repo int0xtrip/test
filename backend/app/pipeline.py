@@ -62,11 +62,14 @@ class TrackingSession:
         )
         saccade_event = self.saccade_detector.process_sample(
             signal["filtered_x"], signal["filtered_y"],
-            signal["velocity"], timestamp
+            signal["velocity"], timestamp,
+            snr=signal.get("snr", 60.0),
         )
 
         if quality["fps"] > 5:
             self.signal_processor.update_sampling_rate(quality["fps"])
+
+        tracking_confidence = self._compute_tracking_confidence(quality, signal)
 
         # Include the most recently completed fixation in the response when
         # a new saccade has just been detected (fixation just ended).
@@ -97,7 +100,16 @@ class TrackingSession:
             "saccade": saccade_event.to_dict() if saccade_event else None,
             "fixation": recent_fix,
             "stats": self.saccade_detector.get_stats(),
+            "tracking_confidence": tracking_confidence,
         }
+
+    def add_calibration_point(self, raw_x: float, raw_y: float,
+                              screen_x: float, screen_y: float):
+        self.gaze_estimator.calibration.add_point(raw_x, raw_y, screen_x, screen_y)
+
+    def apply_calibration(self) -> float:
+        """Fit polynomial calibration from staged points. Returns RMS accuracy in px."""
+        return self.gaze_estimator.calibration.fit()
 
     def set_stimulus(self, target_x: float, target_y: float,
                      expected_direction: str | None = None):
@@ -149,6 +161,37 @@ class TrackingSession:
             "recent_saccades": self.get_recent_saccades(20),
             "recent_fixations": self.get_recent_fixations(20),
         }
+
+    def _compute_tracking_confidence(self, quality: dict, signal: dict) -> float:
+        """Estimate how trustworthy the current gaze estimate is (0-100)."""
+        if not quality.get("face_detected", False):
+            return 0.0
+        conf = 100.0
+        if quality.get("blink_detected"):
+            conf -= 20.0
+        yaw = abs(quality.get("head_yaw", 0) or 0)
+        if yaw > 25:
+            conf -= 20.0
+        elif yaw > 15:
+            conf -= 10.0
+        fps = quality.get("fps", 30) or 30
+        if fps < 20:
+            conf -= 15.0
+        elif fps < 25:
+            conf -= 8.0
+        sq = quality.get("signal_quality") or 0
+        if sq < 40:
+            conf -= 20.0
+        elif sq < 60:
+            conf -= 10.0
+        snr = signal.get("snr", 60) if signal else 60
+        if snr < 15:
+            conf -= 12.0
+        elif snr < 25:
+            conf -= 6.0
+        if not self.gaze_estimator.calibration.calibrated:
+            conf -= 15.0
+        return round(max(0.0, min(100.0, conf)), 1)
 
     def _decode_frame(self, frame_bytes: bytes, width: int, height: int) -> np.ndarray | None:
         try:

@@ -23,6 +23,7 @@ class Saccade:
     latency_ms: float | None = None
     gain: float | None = None
     is_correct: bool | None = None   # for anti-saccade: was response in expected direction?
+    confidence: float = 100.0        # 0-100 detection confidence
 
     def to_dict(self) -> dict:
         return {
@@ -40,6 +41,7 @@ class Saccade:
             "latency_ms": round(self.latency_ms, 1) if self.latency_ms is not None else None,
             "gain": round(self.gain, 3) if self.gain is not None else None,
             "is_correct": self.is_correct,
+            "confidence": round(self.confidence, 1),
         }
 
 
@@ -126,6 +128,7 @@ class SaccadeDetector:
         filtered_y: float,
         velocity: float,
         timestamp: float,
+        snr: float = 60.0,
     ) -> Saccade | None:
         """Process one gaze sample. Returns a completed Saccade if one just ended."""
         detected: Saccade | None = None
@@ -193,6 +196,10 @@ class SaccadeDetector:
                             if self._stimulus_expected_direction is not None:
                                 is_correct = (direction == self._stimulus_expected_direction)
 
+                    confidence = _saccade_confidence(
+                        duration_ms, amplitude, self._saccade_peak_velocity, snr
+                    )
+
                     saccade = Saccade(
                         start_time=self._saccade_start_time,
                         end_time=timestamp,
@@ -208,6 +215,7 @@ class SaccadeDetector:
                         latency_ms=latency,
                         gain=gain,
                         is_correct=is_correct,
+                        confidence=confidence,
                     )
                     self.saccades.append(saccade)
                     if len(self.saccades) > self._max_history:
@@ -341,6 +349,38 @@ class SaccadeDetector:
             duration_ms=duration_ms,
             dispersion=dispersion,
         )
+
+
+def _saccade_confidence(duration_ms: float, amplitude: float,
+                        peak_velocity: float, snr: float) -> float:
+    """Estimate detection confidence (0-100) for a completed saccade.
+
+    Penalises:
+    - Borderline / extreme duration (physiologically implausible)
+    - Very low peak velocity (likely noise)
+    - Small amplitude (hard to distinguish from fixation jitter)
+    - Poor signal quality (low SNR)
+    """
+    conf = 100.0
+    if snr < 10:
+        conf -= 35
+    elif snr < 20:
+        conf -= 20
+    elif snr < 30:
+        conf -= 10
+    if duration_ms < 15 or duration_ms > 150:
+        conf -= 25
+    elif duration_ms < 20 or duration_ms > 120:
+        conf -= 10
+    if amplitude < 15:
+        conf -= 20
+    elif amplitude < 30:
+        conf -= 8
+    if peak_velocity < 40:
+        conf -= 20
+    elif peak_velocity < 80:
+        conf -= 8
+    return max(0.0, min(100.0, conf))
 
 
 def _cardinal(dx: float, dy: float) -> str:

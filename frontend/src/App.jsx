@@ -7,28 +7,38 @@ import StatsPanel from './components/StatsPanel';
 import SaccadeList from './components/SaccadeList';
 import GuidedTest from './components/GuidedTest';
 import MainSequencePlot from './components/MainSequencePlot';
+import ConfidenceMeter from './components/ConfidenceMeter';
+import GuidancePanel from './components/GuidancePanel';
+import CalibrationFlow from './components/CalibrationFlow';
 
-const FRAME_INTERVAL = 33; // ~30 fps
-const SCREEN_W = window.screen.width || 1920;
+const FRAME_INTERVAL = 33;
+const SCREEN_W = window.screen.width  || 1920;
 const SCREEN_H = window.screen.height || 1080;
 
 export default function App() {
   const webcam = useWebcam();
   const ws = useWebSocket();
 
-  const [mode, setMode] = useState('passive'); // 'passive' | 'guided'
-  const [tracking, setTracking] = useState(false);
-  const [quality, setQuality] = useState(null);
-  const [faceDetected, setFaceDetected] = useState(false);
-  const [gazeHistory, setGazeHistory] = useState([]);
-  const [saccades, setSaccades] = useState([]);
-  const [fixations, setFixations] = useState([]);
-  const [stats, setStats] = useState(null);
+  const [mode,           setMode]           = useState('passive');
+  const [tracking,       setTracking]       = useState(false);
+  const [quality,        setQuality]        = useState(null);
+  const [faceDetected,   setFaceDetected]   = useState(false);
+  const [gazeHistory,    setGazeHistory]    = useState([]);
+  const [saccades,       setSaccades]       = useState([]);
+  const [fixations,      setFixations]      = useState([]);
+  const [stats,          setStats]          = useState(null);
   const [sessionSummary, setSessionSummary] = useState(null);
-  const [calibrated, setCalibrated] = useState(false);
+  const [calibrated,     setCalibrated]     = useState(false);
+  const [calibrating,    setCalibrating]    = useState(false);
+  const [calResult,      setCalResult]      = useState(null);
+  const [confidence,     setConfidence]     = useState(null);
 
   const frameLoopRef = useRef(null);
-  const gazeRef = useRef({ x: null, y: null });
+  const gazeRef      = useRef({ x: null, y: null });
+  // raw (pre-calibration) gaze for calibration point capture
+  const rawGazeRef   = useRef({ x: null, y: null });
+
+  // ─── WebSocket message handler ───────────────────────────────────────────
 
   const handleMessage = useCallback((data) => {
     if (data.type === 'session_ended') {
@@ -39,19 +49,22 @@ export default function App() {
       setCalibrated(true);
       return;
     }
+    if (data.type === 'calibration_complete') {
+      setCalibrated(true);
+      setCalResult({ accuracy_px: data.accuracy_px });
+      return;
+    }
     if (data.error) return;
 
-    if (data.quality) setQuality(data.quality);
+    if (data.quality)    setQuality(data.quality);
     setFaceDetected(!!data.face_detected);
+    if (data.tracking_confidence != null) setConfidence(data.tracking_confidence);
 
     if (data.gaze) {
-      gazeRef.current = { x: data.gaze.screen_x, y: data.gaze.screen_y };
+      rawGazeRef.current = { x: data.gaze.raw_x, y: data.gaze.raw_y };
+      gazeRef.current    = { x: data.gaze.screen_x, y: data.gaze.screen_y };
       setGazeHistory(prev => {
-        const next = [...prev, {
-          t: data.timestamp,
-          x: data.gaze.screen_x,
-          y: data.gaze.screen_y,
-        }];
+        const next = [...prev, { t: data.timestamp, x: data.gaze.screen_x, y: data.gaze.screen_y }];
         return next.length > 120 ? next.slice(-120) : next;
       });
     }
@@ -73,9 +86,9 @@ export default function App() {
     if (data.stats) setStats(data.stats);
   }, []);
 
-  useEffect(() => {
-    ws.setOnMessage(handleMessage);
-  }, [ws, handleMessage]);
+  useEffect(() => { ws.setOnMessage(handleMessage); }, [ws, handleMessage]);
+
+  // ─── Session lifecycle ────────────────────────────────────────────────────
 
   const startTracking = useCallback(async () => {
     await webcam.start();
@@ -87,6 +100,8 @@ export default function App() {
     setFixations([]);
     setStats(null);
     setCalibrated(false);
+    setCalResult(null);
+    setConfidence(null);
   }, [webcam, ws]);
 
   const stopTracking = useCallback(() => {
@@ -94,6 +109,7 @@ export default function App() {
     ws.disconnect();
     webcam.stop();
     setTracking(false);
+    setCalibrating(false);
   }, [webcam, ws]);
 
   useEffect(() => {
@@ -105,11 +121,31 @@ export default function App() {
     return () => clearInterval(frameLoopRef.current);
   }, [tracking, ws.connected, webcam, ws]);
 
-  const handleCalibrate = useCallback(() => {
+  // ─── Calibration ─────────────────────────────────────────────────────────
+
+  const handleQuickCalibrate = useCallback(() => {
     ws.sendMessage({ type: 'calibrate_center' });
   }, [ws]);
 
-  // Pro-saccade: no expected direction. Anti-saccade: expected_direction sent.
+  const handleCapturePoint = useCallback((rx, ry, sx, sy) => {
+    ws.sendMessage({ type: 'calibrate_point', raw_x: rx, raw_y: ry, screen_x: sx, screen_y: sy });
+  }, [ws]);
+
+  const handleApplyCalibration = useCallback(() => {
+    ws.sendMessage({ type: 'calibrate_apply' });
+  }, [ws]);
+
+  const openCalibration = useCallback(() => {
+    setCalResult(null);
+    setCalibrating(true);
+  }, []);
+
+  const closeCalibration = useCallback(() => {
+    setCalibrating(false);
+  }, []);
+
+  // ─── Guided test ──────────────────────────────────────────────────────────
+
   const handleStimulus = useCallback((tx, ty, expectedDirection) => {
     ws.sendMessage({
       type: 'stimulus',
@@ -119,12 +155,45 @@ export default function App() {
     });
   }, [ws]);
 
+  // ─── Export ───────────────────────────────────────────────────────────────
+
+  const handleExport = useCallback((summary) => {
+    const s = summary || sessionSummary;
+    if (!s) return;
+
+    // CSV of saccades
+    const rows = (s.recent_saccades || saccades).map(sc => [
+      sc.direction, sc.amplitude?.toFixed(1), sc.duration_ms?.toFixed(0),
+      sc.peak_velocity?.toFixed(0), sc.latency_ms?.toFixed(0) ?? '',
+      sc.gain?.toFixed(3) ?? '', sc.is_correct ?? '', sc.confidence?.toFixed(0) ?? '',
+      sc.angle_deg?.toFixed(1) ?? '',
+    ].join(','));
+    const csv = [
+      'direction,amplitude_px,duration_ms,peak_velocity_pxs,latency_ms,gain,is_correct,confidence,angle_deg',
+      ...rows,
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `oculometry_session_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [sessionSummary, saccades]);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
     <div className="app">
+      {/* ── Header ── */}
       <header className="header">
         <div className="header-left">
           <h1>Oculometry</h1>
-          <span className="app-subtitle">Eye Movement Analysis</span>
+          <span className="app-subtitle">Neurodegenerative Disease Eye Screening</span>
+        </div>
+        <div className="header-center">
+          {tracking && <ConfidenceMeter confidence={confidence} />}
         </div>
         <div className="header-right">
           <span className="privacy-badge">All processing local</span>
@@ -136,21 +205,69 @@ export default function App() {
         </div>
       </header>
 
-      <div className="main-content">
-        {/* Left column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <WebcamView
-            videoRef={webcam.videoRef}
-            canvasRef={webcam.canvasRef}
-            faceDetected={faceDetected}
-            quality={quality}
-          />
+      {/* ── Welcome screen (idle) ── */}
+      {!tracking && (
+        <div className="welcome-screen">
+          <div className="welcome-card">
+            <h2 className="welcome-title">Eye Movement Analysis</h2>
+            <p className="welcome-desc">
+              This tool uses your webcam to measure saccadic eye movements — rapid
+              gaze shifts that reveal how your brain processes visual information.
+              Patterns in latency, velocity, and accuracy can be early indicators
+              of neurodegenerative conditions such as Parkinson's and Alzheimer's disease.
+            </p>
+            <div className="setup-checklist">
+              <div className="setup-title">Before starting:</div>
+              <div className="setup-item">
+                <span className="setup-bullet">1</span>
+                Sit <strong>50–70 cm</strong> from your screen in a well-lit room
+              </div>
+              <div className="setup-item">
+                <span className="setup-bullet">2</span>
+                Make sure your face is <strong>evenly lit</strong> (avoid backlight)
+              </div>
+              <div className="setup-item">
+                <span className="setup-bullet">3</span>
+                Run the <strong>5-point calibration</strong> once connected for best accuracy
+              </div>
+              <div className="setup-item">
+                <span className="setup-bullet">4</span>
+                Try both <strong>Passive</strong> (natural) and <strong>Guided</strong> test modes
+              </div>
+            </div>
+            <button className="btn btn-primary welcome-btn" onClick={startTracking}>
+              Connect Camera &amp; Start
+            </button>
+          </div>
+        </div>
+      )}
 
-          {webcam.error && (
-            <div className="card" style={{ color: 'var(--danger)' }}>{webcam.error}</div>
-          )}
+      {/* ── Main UI (tracking) ── */}
+      {tracking && (
+        <div className="main-content">
+          {/* Left column */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <WebcamView
+              videoRef={webcam.videoRef}
+              canvasRef={webcam.canvasRef}
+              faceDetected={faceDetected}
+              quality={quality}
+            />
 
-          {tracking && (
+            <GuidancePanel
+              quality={quality}
+              faceDetected={faceDetected}
+              calibrated={calibrated}
+              confidence={confidence}
+              tracking={tracking}
+            />
+
+            {webcam.error && (
+              <div className="card" style={{ color: 'var(--danger)', fontSize: 13 }}>
+                {webcam.error}
+              </div>
+            )}
+
             <div className="card">
               <div className="card-title">Controls</div>
               <div className="mode-selector">
@@ -164,60 +281,92 @@ export default function App() {
                 >Guided Test</button>
               </div>
 
-              {!calibrated && faceDetected && (
-                <div style={{ marginBottom: 12 }}>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                    Look at the center of your screen, then click calibrate.
-                  </p>
-                  <button className="btn btn-secondary" onClick={handleCalibrate}>
-                    Quick Calibrate
-                  </button>
-                </div>
-              )}
-              {calibrated && (
-                <p style={{ fontSize: 12, color: 'var(--success)' }}>
-                  Calibrated ✓
-                </p>
-              )}
+              <div className="calibration-row">
+                {!calibrated ? (
+                  <>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={openCalibration}
+                      disabled={!faceDetected}
+                    >
+                      5-Point Calibrate
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleQuickCalibrate}
+                      disabled={!faceDetected}
+                      title="Look at screen center, then click"
+                    >
+                      Quick (center-only)
+                    </button>
+                  </>
+                ) : (
+                  <div className="calibration-status">
+                    <span className="cal-ok-dot" />
+                    <span>
+                      Calibrated
+                      {calResult?.accuracy_px != null && ` — ${calResult.accuracy_px} px accuracy`}
+                    </span>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={openCalibration}
+                      style={{ marginLeft: 'auto' }}
+                    >
+                      Recalibrate
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          )}
 
-          {tracking && mode === 'guided' && (
-            <GuidedTest
-              onStimulus={handleStimulus}
-              screenW={SCREEN_W}
-              screenH={SCREEN_H}
-              gazeX={gazeRef.current.x}
-              gazeY={gazeRef.current.y}
-            />
-          )}
+            {mode === 'guided' && (
+              <GuidedTest
+                onStimulus={handleStimulus}
+                screenW={SCREEN_W}
+                screenH={SCREEN_H}
+                gazeX={gazeRef.current.x}
+                gazeY={gazeRef.current.y}
+              />
+            )}
+          </div>
+
+          {/* Right column */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <GazePlot gazeHistory={gazeHistory} saccades={saccades} fixations={fixations} />
+            <MainSequencePlot saccades={saccades} />
+            <StatsPanel stats={stats} deviation={sessionSummary?.deviation} />
+            <SaccadeList saccades={saccades} />
+          </div>
         </div>
+      )}
 
-        {/* Right column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <GazePlot gazeHistory={gazeHistory} saccades={saccades} fixations={fixations} />
-          <MainSequencePlot saccades={saccades} />
-          <StatsPanel stats={stats} deviation={sessionSummary?.deviation} />
-          <SaccadeList saccades={saccades} />
-        </div>
-      </div>
+      {/* ── Calibration overlay ── */}
+      {calibrating && (
+        <CalibrationFlow
+          rawGazeRef={rawGazeRef}
+          onCapture={handleCapturePoint}
+          onApply={handleApplyCalibration}
+          onClose={closeCalibration}
+          result={calResult}
+        />
+      )}
 
-      {/* Session summary modal */}
-      {sessionSummary && (
+      {/* ── Session summary modal ── */}
+      {sessionSummary && !calibrating && (
         <div className="modal-overlay">
           <div className="card modal-card">
             <div className="card-title">Session Complete</div>
             <p style={{ fontSize: 13, marginBottom: 12, color: 'var(--text-secondary)' }}>
-              Duration: {sessionSummary.duration_seconds}s
+              Duration: {sessionSummary.duration_seconds}s &nbsp;·&nbsp;
+              {sessionSummary.stats?.total_saccades ?? 0} saccades detected
             </p>
             <StatsPanel stats={sessionSummary.stats} deviation={sessionSummary.deviation} />
-            <button
-              className="btn btn-primary"
-              style={{ marginTop: 16, width: '100%' }}
-              onClick={() => setSessionSummary(null)}
-            >
-              Close
-            </button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button className="btn btn-primary" style={{ flex: 1 }}
+                onClick={() => setSessionSummary(null)}>Close</button>
+              <button className="btn btn-secondary"
+                onClick={() => handleExport(sessionSummary)}>Export CSV</button>
+            </div>
           </div>
         </div>
       )}
