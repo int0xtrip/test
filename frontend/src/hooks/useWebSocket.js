@@ -2,11 +2,18 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 
 export default function useWebSocket() {
   const wsRef = useRef(null);
+  const connectingRef = useRef(false);
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const onMessageRef = useRef(null);
 
   const connect = useCallback(() => {
+    // Guard against double-connect (React StrictMode double-mount, etc.)
+    if (connectingRef.current || (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN)) {
+      return Promise.resolve(sessionId);
+    }
+    connectingRef.current = true;
+
     return new Promise((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
@@ -14,6 +21,7 @@ export default function useWebSocket() {
 
       ws.onopen = () => {
         wsRef.current = ws;
+        connectingRef.current = false;
         setConnected(true);
       };
 
@@ -29,17 +37,19 @@ export default function useWebSocket() {
       };
 
       ws.onerror = (err) => {
+        connectingRef.current = false;
         console.error('WebSocket error:', err);
         reject(err);
       };
 
       ws.onclose = () => {
         wsRef.current = null;
+        connectingRef.current = false;
         setConnected(false);
         setSessionId(null);
       };
     });
-  }, []);
+  }, [sessionId]);
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
