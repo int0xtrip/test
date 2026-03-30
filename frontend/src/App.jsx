@@ -193,7 +193,7 @@ export default function App() {
           <span className="app-subtitle">Neurodegenerative Disease Eye Screening</span>
         </div>
         <div className="header-center">
-          {tracking && <ConfidenceMeter confidence={confidence} />}
+          {tracking && <ConfidenceMeter confidence={confidence ?? 0} />}
         </div>
         <div className="header-right">
           <span className="privacy-badge">All processing local</span>

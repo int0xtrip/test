@@ -5,9 +5,7 @@ import React from 'react';
  * Colour goes red → amber → green as confidence improves.
  */
 export default function ConfidenceMeter({ confidence }) {
-  if (confidence == null) return null;
-
-  const pct = Math.round(confidence);
+  const pct = Math.round(confidence ?? 0);
   const color = pct >= 70 ? 'var(--success)' : pct >= 45 ? 'var(--warning)' : 'var(--danger)';
   const label = pct >= 70 ? 'Good' : pct >= 45 ? 'Fair' : 'Poor';
 

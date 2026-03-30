@@ -35,21 +35,6 @@ function QualityBar({ quality }) {
           background: signalColor,
         }} />
       </div>
-      {!quality.face_detected && (
-        <p style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>
-          Position your face within the oval guide
-        </p>
-      )}
-      {quality.face_detected && !quality.head_position_ok && (
-        <p style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>
-          {quality.head_msg}
-        </p>
-      )}
-      {quality.face_detected && !quality.lighting_ok && (
-        <p style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>
-          {quality.lighting_msg}
-        </p>
-      )}
     </>
   );
 }
