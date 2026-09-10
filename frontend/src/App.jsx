@@ -10,6 +10,7 @@ import MainSequencePlot from './components/MainSequencePlot';
 import ConfidenceMeter from './components/ConfidenceMeter';
 import GuidancePanel from './components/GuidancePanel';
 import CalibrationFlow from './components/CalibrationFlow';
+import TestResults from './components/TestResults';
 
 const FRAME_INTERVAL = 33;
 const SCREEN_W = window.screen.width  || 1920;
@@ -32,6 +33,7 @@ export default function App() {
   const [calibrating,    setCalibrating]    = useState(false);
   const [calResult,      setCalResult]      = useState(null);
   const [confidence,     setConfidence]     = useState(null);
+  const [showResults,    setShowResults]    = useState(false);
 
   const frameLoopRef = useRef(null);
   const gazeRef      = useRef({ x: null, y: null });
@@ -107,6 +109,7 @@ export default function App() {
     setCalibrated(false);
     setCalResult(null);
     setConfidence(null);
+    setShowResults(false);
   }, [webcam, ws]);
 
   const stopTracking = useCallback(() => {
@@ -159,6 +162,10 @@ export default function App() {
       ...(expectedDirection ? { expected_direction: expectedDirection } : {}),
     });
   }, [ws]);
+
+  const handleTestComplete = useCallback(() => {
+    setShowResults(true);
+  }, []);
 
   // ─── Export ───────────────────────────────────────────────────────────────
 
@@ -329,6 +336,7 @@ export default function App() {
             {mode === 'guided' && (
               <GuidedTest
                 onStimulus={handleStimulus}
+                onComplete={handleTestComplete}
                 screenW={SCREEN_W}
                 screenH={SCREEN_H}
                 gazeX={gazeRef.current.x}
@@ -358,8 +366,18 @@ export default function App() {
         />
       )}
 
+      {/* ── Guided test results modal ── */}
+      {showResults && !calibrating && (
+        <TestResults
+          stats={stats}
+          saccades={saccades}
+          onClose={() => setShowResults(false)}
+          onExport={() => handleExport(null)}
+        />
+      )}
+
       {/* ── Session summary modal ── */}
-      {sessionSummary && !calibrating && (
+      {sessionSummary && !calibrating && !showResults && (
         <div className="modal-overlay">
           <div className="card modal-card">
             <div className="card-title">Session Complete</div>

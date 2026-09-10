@@ -41,9 +41,9 @@ class TrackingSession:
             return {"error": "Failed to decode frame", "frame": self.frame_count}
 
         detection = self.face_detector.process_frame(frame_rgb)
-        quality = self.quality_checker.check(frame_rgb, detection, None)
 
         if detection is None:
+            quality = self.quality_checker.check(frame_rgb, None, None)
             return {
                 "frame": self.frame_count,
                 "timestamp": timestamp,
@@ -58,6 +58,8 @@ class TrackingSession:
 
         h_fr, w_fr = frame_rgb.shape[:2]
         gaze = self.gaze_estimator.estimate(detection)
+        # Pass raw gaze x so quality checker accumulates signal history for SNR/periodogram
+        quality = self.quality_checker.check(frame_rgb, detection, gaze["raw_x"])
         signal = self.signal_processor.add_sample(
             gaze["screen_x"], gaze["screen_y"], timestamp
         )
@@ -182,20 +184,19 @@ class TrackingSession:
         elif yaw > 15:
             conf -= 10.0
         fps = quality.get("fps", 30) or 30
-        if fps < 20:
+        if fps < self.quality_checker.MIN_FPS:
             conf -= 15.0
         elif fps < 25:
             conf -= 8.0
+        if not quality.get("distance_ok", True):
+            conf -= 10.0
         sq = quality.get("signal_quality") or 0
         if sq < 40:
             conf -= 20.0
         elif sq < 60:
             conf -= 10.0
-        snr = signal.get("snr", 60) if signal else 60
-        if snr < 15:
-            conf -= 12.0
-        elif snr < 25:
-            conf -= 6.0
+        if quality.get("signal_snr") is not None and not quality.get("signal_snr_ok", True):
+            conf -= 10.0
         if not self.gaze_estimator.calibration.calibrated:
             conf -= 15.0
         return round(max(0.0, min(100.0, conf)), 1)

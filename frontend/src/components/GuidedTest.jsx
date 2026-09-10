@@ -30,7 +30,7 @@ const ANTISACCADE_TRIALS = [
 const TARGET_MS = 1200;  // target visible window (saccade expected within this)
 const fixationMs = () => Math.floor(Math.random() * 1000) + 1000;  // 1000–2000 ms
 
-export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY }) {
+export default function GuidedTest({ onStimulus, onComplete, screenW, screenH, gazeX, gazeY }) {
   const [testMode, setTestMode] = useState('prosaccade');
   const [running,  setRunning]  = useState(false);
   const [phase,    setPhase]    = useState('idle');   // idle | fixation | target
@@ -61,6 +61,7 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
       setRunning(false);
       setPhase('idle');
       setTarget(null);
+      if (idx >= trials.length && onComplete) onComplete();
       return;
     }
 
@@ -95,7 +96,7 @@ export default function GuidedTest({ onStimulus, screenW, screenH, gazeX, gazeY 
 
     }, fixationMs());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [testMode, onStimulus, screenW, screenH]);
+  }, [testMode, onStimulus, onComplete, screenW, screenH]);
 
   const startTest = useCallback(() => {
     runningRef.current = true;
